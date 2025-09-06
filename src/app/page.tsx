@@ -1,103 +1,127 @@
-import Image from "next/image";
+// app/page.tsx
 
-export default function Home() {
+"use client";
+
+import { useState } from "react";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Loader2, UploadCloud } from "lucide-react";
+
+// A simple toast-like notification component
+function Notification({ message, type, onDismiss }: { message: string; type: 'success' | 'error'; onDismiss: () => void }) {
+  const bgColor = type === 'success' ? 'bg-green-100' : 'bg-red-100';
+  const textColor = type === 'success' ? 'text-green-800' : 'text-red-800';
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <div className={`p-4 mt-4 rounded-md ${bgColor} ${textColor} flex justify-between items-center`}>
+      <p>{message}</p>
+      <button onClick={onDismiss} className="font-bold">X</button>
+    </div>
+  );
+}
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+
+export default function HomePage() {
+  const [file, setFile] = useState<File | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const supabase = createClientComponentClient();
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      setFile(e.target.files[0]);
+      setNotification(null);
+    }
+  };
+
+  const handleImport = async () => {
+    if (!file) {
+      setNotification({ message: "Please select a PDF document to import.", type: 'error' });
+      return;
+    }
+
+    setIsImporting(true);
+    setNotification(null);
+    const fileName = file.name;
+
+    try {
+      // 1. Upload the PDF to a temporary Supabase Storage bucket
+      const { error: uploadError } = await supabase.storage
+        .from("temp-uploads")
+        .upload(fileName, file, {
+          cacheControl: '3600',
+          upsert: true,
+        });
+
+      if (uploadError) {
+        throw new Error(`File upload failed: ${uploadError.message}`);
+      }
+
+      // Get the public URL of the uploaded file
+      const { data: publicUrlData } = supabase.storage
+        .from("temp-uploads")
+        .getPublicUrl(fileName);
+      
+      const publicUrl = publicUrlData.publicUrl;
+
+      // 2. Trigger the Supabase Edge Function
+      const { data, error: functionError } = await supabase.functions.invoke('import-property', {
+        body: { pdfUrl: publicUrl, fileName },
+      });
+
+      if (functionError) {
+        throw new Error(functionError.message);
+      }
+
+      setNotification({ message: `Success! Property at ${data.property.address} imported.`, type: 'success' });
+
+    } catch (err: any) {
+      console.error("Import failed:", err);
+      setNotification({ message: err.message || "An unknown error occurred.", type: 'error' });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  return (
+    <div className="flex min-h-screen items-center justify-center p-4 bg-gray-50">
+      <Card className="w-full max-w-xl">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <UploadCloud size={24} /> AI Real Estate Importer
+          </CardTitle>
+          <CardDescription>
+            Upload a real estate PDF document to automatically extract property details using AI.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="pdf-upload">Upload PDF Document</Label>
+            <Input id="pdf-upload" type="file" accept=".pdf" onChange={handleFileChange} />
+          </div>
+          
+          <Button
+            onClick={handleImport}
+            disabled={!file || isImporting}
+            className="w-full"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+            {isImporting ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Importing...
+              </>
+            ) : (
+              "Import Listing"
+            )}
+          </Button>
+          {notification && (
+            <Notification message={notification.message} type={notification.type} onDismiss={() => setNotification(null)} />
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
